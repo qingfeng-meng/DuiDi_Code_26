@@ -1,0 +1,24 @@
+// generated from rosidl_adapter/resource/msg.idl.em
+// with input from vision_msgs/msg/TargetCoord.msg
+// generated code does not contain a copyright notice
+
+
+module vision_msgs {
+  module msg {
+    @verbatim (language="comment", text=
+      "坐标")
+    struct TargetCoord {
+      float p_x;
+
+      float p_y;
+
+      @verbatim (language="comment", text=
+        "置信度")
+      float conf;
+
+      @verbatim (language="comment", text=
+        "目标类别")
+      uint8 class_id;
+    };
+  };
+};

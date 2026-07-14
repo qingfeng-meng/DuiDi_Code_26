@@ -1,0 +1,6 @@
+{
+  "package_name": "vision_msgs",
+  "non_idl_tuples": [
+    "/home/proxima/vision_msgs:msg/TargetCoord.msg"
+  ]
+}
