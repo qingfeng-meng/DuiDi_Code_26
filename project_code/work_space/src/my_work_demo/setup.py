@@ -26,7 +26,12 @@ setup(
         'console_scripts': [
             'first = my_work_demo.first:main',
             'first_00 = my_work_demo.first_00:main',
-            'calculate_secondary_waypoints = my_work_demo.calculate_secondary_waypoints:main'
+            'calculate_secondary_waypoints = my_work_demo.calculate_secondary_waypoints:main',
+            'project_part_01 = my_work_demo.project_part_01:main',
+            'dynamic_mission_01 = my_work_demo.dynamic_misssion_01:main',
+            'project_part_02 = my_work_demo.project_part_02:main',
+            'project_part_03 = my_work_demo.project_part_03:main',
+            'project_part_04 = my_work_demo.project_part_04:main'
         ],
     },
 )

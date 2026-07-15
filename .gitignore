@@ -1,0 +1,13 @@
+build/
+install/
+log/
+
+target-*/
+*.stamp
+cmake-build-*/
+
+*.log
+*.swp
+.DS_Store
+__pycache__/
+*.pyc

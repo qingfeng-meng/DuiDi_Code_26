@@ -6,6 +6,12 @@ from mavros_msgs.srv import SetMode, WaypointClear, WaypointPull, WaypointPush, 
 from sensor_msgs.msg import NavSatFix
 from rclpy.node import Node
 from rclpy.qos import HistoryPolicy, QoSProfile, ReliabilityPolicy
+from enum import Enum
+
+class MissionState(Enum):
+    TAKEOFF_AND_SEACH = 1
+    ATTACK              = 2
+    RETURN_AND_LAND     = 3
 
 class ProjectPartOne(Node):
     def __init__(self):
@@ -53,11 +59,11 @@ class ProjectPartOne(Node):
             self.state_callback,qos_profile
         )
 
-        self.secondary_waypoints_sub = self.create_subscription(
-            WaypointList,
-            '/secondary_waypoints',
-            self.secondary_callback,qos_profile
-        )
+        # self.secondary_waypoints_sub = self.create_subscription(
+        #     WaypointList,
+        #     '/secondary_waypoints',
+        #     self.secondary_callback,qos_profile
+        # )
 
         #创建服务客户端
         #1. 清除航点 2. 推送航点 3. 设置模式 4. 设置当前航点 5. 拉取航点
@@ -68,23 +74,25 @@ class ProjectPartOne(Node):
         # self.pull_mission_client = self.create_client(WaypointPull, 'mavros/mission/pull')
 
         # 三段航点文件路径
-        self.primary_path = "/home/qing/project_code/work_space/src/waypoints/dacaochang/waypoints_test_A.waypoints"
-        self.secondary_path = "/home/qing/project_code/work_space/src/waypoints/dacaochang/waypoints_test_B.waypoints"
-        self.third_path = "/home/qing/project_code/work_space/src/waypoints/dacaochang/waypoints_test_C.waypoints"
+        self.primary_path = "/home/qing/Duidi_Code_26/project_code/work_space/src/waypoints/dacaochang/dacaochang_test_02_A.waypoints"
+        self.secondary_path = "/home/qing/Duidi_Code_26/project_code/work_space/src/waypoints/dacaochang/dacaochang_test_02_B.waypoints"
+        self.third_path = "/home/qing/Duidi_Code_26/project_code/work_space/src/waypoints/dacaochang/dacaochang_test_02_C.waypoints"
 
-        self.last_reached_wp = None                      # 当前航点的序号
 
         self.current_global_position = None              # 当前GPS坐标
 
         self.current_state = None                        # 当前状态
 
         self.current_callback_waypoints = None           # 当前回调函数的航点列表
-        self.current_waypoints = None                    # 当前航点列表(执行的航点列表)（为了和当前回调航点列表进行对比，用于检验）
+        self.current_waypoints = None                    # 当前航点列表(执行的航点列表)
         self.primary_waypoints = None
         self.secondary_waypoints = None
         self.third_waypoints = None
 
         self.wait_for_service()
+
+        self.last_reached_wp = None                      # 当前到达的航点序号
+        self.mission_state = None
 
         self.primary_waypoints_compeleted = False
         self.secondary_waypoints_compeleted = False
@@ -98,44 +106,36 @@ class ProjectPartOne(Node):
     def waypoint_reached_callback(self, msg: WaypointReached):
         """"当前已到达的航点"""
         self.last_reached_wp = msg.wp_seq
-        self.get_logger().info(f'已到达航点 {msg.wp_seq}')   
+        self.get_logger().info(f'已到达航点 {msg.wp_seq}')
 
-        if not self.primary_waypoints_compeleted:
-            if self.last_reached_wp == len(self.primary_waypoints) - 2:
-                self.get_logger().info('第一航线已执行完毕')
-                self.primary_waypoints_compeleted = True
-                self.last_reached_wp = 0
-                self.update_mission(self.secondary_waypoints)
+        if self.mission_state == MissionState.TAKEOFF_AND_SEACH and self.last_reached_wp == len(self.primary_waypoints) - 2:
+            self.last_reached_wp = 0
+            self.get_logger().info('第一航线已执行完毕, 切换第二航线')
+            self.secondary_waypoints = self.read_waypoints_from_waypoints(self.secondary_path)
+            self.print_waypoint_info(self.secondary_waypoints)      
+            self.mission_state = MissionState.ATTACK
+            self.update_mission(self.secondary_waypoints)
 
-        if self.primary_waypoints_compeleted and not self.secondary_waypoints_compeleted:
-            if self.last_reached_wp == len(self.secondary_waypoints) - 2:
-                self.get_logger().info('第二航线已执行完毕')
-                self.secondary_waypoints_compeleted = True
-                self.last_reached_wp = 0
-                self.update_mission(self.third_waypoints)
+        if self.mission_state == MissionState.ATTACK and self.last_reached_wp == len(self.secondary_waypoints) - 2:
+            self.last_reached_wp = 0
+            self.get_logger().info('第二航线已执行完毕, 切换第三航线')
+            self.third_waypoints = self.read_waypoints_from_waypoints(self.third_path)
+            self.print_waypoint_info(self.third_waypoints)              
+            self.mission_state = MissionState.RETURN_AND_LAND
+            self.update_mission(self.third_waypoints)
 
-        if self.primary_waypoints_compeleted and self.secondary_waypoints_compeleted and not self.third_waypoints_compeleted:
-            if self.last_reached_wp == len(self.third_waypoints) - 1:
-                self.get_logger().info('第三航线已执行完毕')
-                self.third_waypoints_compeleted = True
-
-
-        if self.primary_waypoints_compeleted and self.secondary_waypoints_compeleted and self.third_waypoints_compeleted:
-            self.get_logger().info('所有航点已执行完毕')
-            return
 
     def global_position_callback(self, msg: NavSatFix):
         """当前GPS坐标"""
-        self.current_golable_position = msg
-        # self.get_logger().info(f'当前GPS坐标: {msg.latitude}, {msg.longitude}, {msg.altitude}')
+        self.current_global_position = (msg.latitude, msg.longitude, msg.altitude)
 
     def state_callback(self, msg: State):
         """当前状态"""
         self.current_state = msg
 
-    def secondary_callback(self, msg: WaypointList):
-        """第二航线订阅获取"""
-        self.secondary_waypoints = msg.waypoints
+    # def secondary_callback(self, msg: WaypointList):
+    #     """第二航线订阅获取"""
+    #     self.secondary_waypoints = msg.waypoints
 
 #等待服务就绪
     def wait_for_service(self):
@@ -302,7 +302,7 @@ class ProjectPartOne(Node):
     
         self.get_logger().info(f"从 {file_path} 加载了 {len(waypoints)} 个有效航点")
         return waypoints
-    
+
     def update_mission(self, new_waypoints: ty.List[Waypoint]) -> bool:
         """在此函数中进行航点更新"""
         """上传新的航线，需要先更换航线"""
@@ -373,12 +373,9 @@ class ProjectPartOne(Node):
     def run(self):
         self.primary_waypoints = self.read_waypoints_from_waypoints(self.primary_path)
         self.print_waypoint_info(self.primary_waypoints)
-        self.secondary_waypoints = self.read_waypoints_from_waypoints(self.secondary_path)
-        self.print_waypoint_info(self.secondary_waypoints)
-        self.third_waypoints = self.read_waypoints_from_waypoints(self.primary_path)
-        self.print_waypoint_info(self.third_waypoints)        
 
 
+        self.mission_state = MissionState.TAKEOFF_AND_SEACH
         self.clear_mission()
         self.push_mission(self.primary_waypoints)
         self.set_current_waypoint(0)
