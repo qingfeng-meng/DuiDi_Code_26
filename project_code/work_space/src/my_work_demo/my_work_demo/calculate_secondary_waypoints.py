@@ -141,8 +141,6 @@ class CalculateSecondaryWaypoints(Node):
         self.cmd_long_cli = self.create_client(CommandLong, '/mavros/cmd/command')
 
         # --- ROS2 参数声明 (可在launch文件中覆写) ---
-
-        # --- ROS2 参数声明 (可在launch文件中覆写) ---
         self.declare_parameter('stable_window', STABLE_WINDOW)
         self.declare_parameter('max_pos_error', MAX_POS_ERROR)
         self.declare_parameter('wind_history_size', WIND_HISTORY_SIZE)
@@ -644,13 +642,12 @@ class CalculateSecondaryWaypoints(Node):
     # ============================================================
     # 航线生成
     #
-    # 航线结构 (共10个航点):
+    # 航线结构 (共9个航点):
     #   [0] 接近起点    — 安全区边界上, 正对目标方向
     #   [1-5] 预瞄准段  — 6个等距航点, 线性插值至投弹点
     #   [6] DO_SET_SERVO — 通道7 PWM=1900, 释放弹药
-    #   [7] 悬停保持    — 在投弹点悬停0.5s
-    #   [8] DO_SET_SERVO — 通道7 PWM=1100, 收回舵机
-    #   [9] 脱离点      — 朝向安全区中心飞行, 转交返航航线
+    #   [7] DO_SET_SERVO — 通道7 PWM=1100, 收回舵机
+    #   [8] 脱离点      — 朝向安全区中心飞行, 转交返航航线
     #
     # 入口方向: 从安全区边界 (远离中心侧) 飞向目标
     # 出口方向: 投弹后飞向安全区中心 (返回安全位置)
@@ -726,11 +723,6 @@ class CalculateSecondaryWaypoints(Node):
         servo_drop.param2 = 1900.0   # PWM高电平 → 释放
         waypoints.append(servo_drop)
 
-        # --- 悬停保持: 投弹后在释放点短暂停留, 确保释放完成 ---
-        hold_wp = self._make_wp(MAV_CMD_NAV_WAYPOINT, rls_lat, rls_lon, FLIGHT_ALTITUDE)
-        hold_wp.param1 = 0.5         # 悬停0.5秒
-        waypoints.append(hold_wp)
-
         # --- 收回舵机: PWM=1100 ---
         servo_retract = self._make_wp(MAV_CMD_DO_SET_SERVO, rls_lat, rls_lon, FLIGHT_ALTITUDE)
         servo_retract.param1 = 7.0
@@ -759,6 +751,8 @@ class CalculateSecondaryWaypoints(Node):
     #   3. 检查 |x'| <= half_side 且 |y'| <= half_side
     #   4. 裁剪时等比缩放 (x', y') 至边界内
     # ============================================================
+
+    def _is_in_zone(self, lat, lon):
         if self.zone_center is None:
             return True
         if not self.zone_ready or self.zone_corners is None or len(self.zone_corners) < 4:

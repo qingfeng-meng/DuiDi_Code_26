@@ -1,0 +1,104 @@
+# 03与01方法、工具、实现途径差异
+
+**Session ID:** ses_09b0ca822ffeBwnI1DbDB9i5Y1
+**Created:** 7/15/2026, 4:44:57 PM
+**Updated:** 7/15/2026, 4:45:30 PM
+
+---
+
+## User
+
+@src/my_work_demo/my_work_demo/project_part_03.py @src/my_work_demo/my_work_demo/project_part_01.py 这两个文件中，03是正确的版本，给我讲讲03和01的不同，不要改文件。不同不是代码对比，是里面涉及到的不同的方法，工具，实现途径
+
+---
+
+## Assistant (Build · DeepSeek V4 Pro · 33.1s)
+
+_Thinking:_
+
+The user wants me to compare the two files (project_part_03.py and project_part_01.py), focusing on the different methods, tools, and implementation approaches used, not a line-by-line code diff. Let me analyze the key differences.
+
+Let me systematically compare the two:
+
+## 1. MissionState Enum
+- **01**: `TAKEOFF_AND_SEACH`, `ATTACK`, `RETURN_AND_LAND` (3 states, mission-oriented naming)
+- **03**: `PRIMARY`, `SECONDARY`, `THIRD`, `DONE` (4 states with a `DONE` terminal state, sequential/phase-oriented naming)
+
+## 2. Asynchronous vs Synchronous Service Calls
+- **01**: Uses `rclpy.spin_until_future_complete()` - **blocking/synchronous** approach for each service call (clear, push, set_mode, set_current)
+- **03**: Uses `future.add_done_callback()` - **fully asynchronous** callback-based approach for all service calls
+
+## 3. Mission Switching Mechanism
+- **01**: `update_mission()` method - **linear/sequential blocking** approach: set LOITER mode → clear → push → set current → set AUTO.MISSION. All steps are blocking calls in sequence.
+- **03**: `switch_mission()` + timer-driven **state machine** with phases (`set_loiter`, `clear`, `push`, `pull`, `set_current`, `wait_auto`). Uses a 0.5s timer (`_switch_timer_callback`) to poll and confirm each step before proceeding. This is a **non-blocking, event-driven** approach.
+
+## 4. Service Verification / Feedback
+- **01**: Uses `spin_until_future_complete` with timeout - waits but doesn't verify the actual state transition
+- **03**: After sending a mode change command, uses a timer to **poll and confirm** the mode change actually took effect (e.g., checking `current_state.mode == 'AUTO.LOITER'` before proceeding). Has retry/retry timeout logic.
+
+## 5. WaypointPull Service
+- **01**: `pull_mission_client` is **commented out** (#74), not used. No verification step.
+- **03**: `pull_mission_client` is **active** and used as a verification step in the mission switch chain (pull after push to verify upload).
+
+## 6. Switching Flag / Concurrent Protection
+- **01**: No mutex or switching flag - if waypoint_reached fires during a switch, it could trigger another switch
+- **03**: Has `self.switching` flag that blocks `waypoint_reached_callback` from processing during a switch, preventing race conditions.
+
+## 7. Waypoint Reading on Switch
+- **01**: Reads waypoints from file **at switch time** (in `waypoint_reached_callback` when last wp reached) - file I/O in a callback
+- **03**: Pre-loads all three waypoint lists in `run()` and stores them as member variables (`self.secondary_waypoints`, `self.third_waypoints`), switching uses pre-loaded data.
+
+## 8. Init Sequence
+- **01**: Simple sequential blocking calls in `run()` - clear → push → set_current → set_mode
+- **03**: Uses an **asynchronous chain** with `_on_init_step_done()` callback chain, plus waits for AUTO.MISSION confirmation via timer.
+
+## 9. DONE State
+- **01**: No DONE state - after third mission, nothing explicitly marks completion
+- **03**: Explicit `MissionState.DONE` that prevents further waypoint processing.
+
+## 10. `switch_retry` mechanism
+- **01**: No retry mechanism
+- **03**: Has `switch_retry` counter with max retries for stages like LOITER confirmation and AUTO.MISSION confirmation.
+
+Let me present this clearly.
+
+## 03 与 01 的核心设计差异
+
+### 1. 异步调用机制 — 03 的核心升级
+- **01**: 所有 MAVROS 服务调用使用 `rclpy.spin_until_future_complete()`，**阻塞式同步**调用。每次呼叫挂起当前回调，超时 5s 后强制返回。
+- **03**: 全部改用 `future.add_done_callback()` lambda 回调，**完全异步非阻塞**。所有 `_do_*` 方法都接受一个 `on_done` 回调，链式串联执行。
+
+### 2. 航线切换机制 — 状态机 vs 线性流程
+- **01**: `update_mission()` 是**一次性线性执行**：LOITER → clear → push → set_current → AUTO.MISSION，5 步阻塞调用一次跑完，不验证中间状态。
+- **03**: 使用 **0.5s 定时器驱动的状态机** (`_switch_timer_callback`) 分 6 个阶段 (`set_loiter` / `clear` / `push` / `pull` / `set_current` / `wait_auto`)，每步**主动轮询飞控状态确认生效后才推进下一阶段**，带重试次数和超时强制推进。
+
+### 3. 飞控状态确认 — 03 新引入的反馈闭环
+- **01**: 发出模式切换命令后不验证，直接假设成功继续下一步。
+- **03**: 发送 `AUTO.LOITER` / `AUTO.MISSION` 后，定时器会反复检查 `self.current_state.mode` 是否已变为目标值，有最大重试次数（10/15/30），超时后强制推进。这是从"发完就走"升级为"**发完确认再走**"。
+
+### 4. WaypointPull 拉取验证 — 03 新增的校验环节
+- **01**: `pull_mission_client` 被注释掉，切换链中无拉取验证步骤。
+- **03**: 在 push 之后增加 `pull` 阶段，异步拉取飞控当前航线进行一致性验证，确保推送成功后才继续。
+
+### 5. 并发保护 — `switching` 标志
+- **01**: 无切换保护。在 `waypoint_reached_callback` 中，如果飞控恰好在切换期间回报航点到达，可能触发重入切换。
+- **03**: 新增 `self.switching` 标志位。切换期间 `waypoint_reached_callback` 直接 return，防止竞态条件。
+
+### 6. 航点预加载 vs 按需加载
+- **01**: 第二/第三航线在**切换触发时**才从文件读取（在 `waypoint_reached_callback` 回调中做文件 I/O），阻塞回调线程。
+- **03**: `run()` 中一次性预加载三个文件到 `self.primary/secondary/third_waypoints`，切换时直接使用内存数据。
+
+### 7. 初始化启动流程
+- **01**: `run()` 中 4 步顺序阻塞调用。
+- **03**: `run()` 使用与切换相同的异步回调链 (`_on_init_step_done`)，init_clear → init_push → init_pull → init_current → init_auto，最后通过定时器等待 `AUTO.MISSION` 确认后才标记启动完成。
+
+### 8. 终端状态
+- **01**: 三条航线跑完后无明确终止标记。
+- **03**: 新增 `MissionState.DONE`，第三条线完成后进入该状态，后续航点到达事件被忽略（`waypoint_reached_callback` 中提前 return）。
+
+---
+
+**一句话总结**：01 是"发命令、等结果、不验证"的**同步阻塞**模式，03 是"发命令、装回调、定时轮询确认状态"的**异步事件驱动+反馈闭环**模式，后者在可靠性和并发安全性上显著提升。
+
+---
+
