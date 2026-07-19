@@ -25,7 +25,9 @@ setup(
     entry_points={
         'console_scripts': [
             'project_part_03 = my_work_demo.project_part_03:main',
-            'secondary_waypoint = my_work_demo.secondary_waypoint'
+            'project_part_px4 = my_work_demo.project_part_px4:main',
+            'secondary_waypoint = my_work_demo.secondary_waypoint',
+            'secondary_waypoint_01 = my_work_demo.secondary_waypoint_01:main'
         ],
     },
 )

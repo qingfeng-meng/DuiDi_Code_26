@@ -15,10 +15,11 @@ from mavros_msgs.msg import Waypoint, WaypointList, VFR_HUD
 from mavros_msgs.srv import WaypointPush, WaypointClear, CommandLong
 
 #投弹的整体流程：获取目标点后，通过反向推理，计算在空气阻力的影响下，如何让弹药命中目标
+#飞行器从起飞区方向进入打击区，借助 len_of_sight 距离对准目标
 
-class CalculateSecondaryWaypoints(Node):
+class CalculateSecondaryWaypoints01(Node):
     def __init__(self):
-        super().__init__('calculate_secondary_waypoints')
+        super().__init__('calculate_secondary_waypoints_01')
 
         qos_profile = QoSProfile(
             history=HistoryPolicy.KEEP_LAST,
@@ -63,6 +64,15 @@ class CalculateSecondaryWaypoints(Node):
         self.target_pos = None
         self.target_lon = None
         self.target_lat = None
+
+        #返航航线文件路径（QGC WPL格式，从Mission Planner导出）
+        self.return_pos_path = "/home/qing/Duidi_Code_26/project_code/work_space/src/return_pos.waypoints"
+
+        #辅助点坐标（起飞区中标定点，用于计算打击方位角）
+        self.declare_parameter('fuzhu_lat', 0.0)
+        self.fuzhu_lat = self.get_parameter('fuzhu_lat').value
+        self.declare_parameter('fuzhu_lon', 0.0)
+        self.fuzhu_lon = self.get_parameter('fuzhu_lon').value
         
         #风速历史队列
         self.declare_parameter('wind_history_size', 10)
@@ -80,6 +90,11 @@ class CalculateSecondaryWaypoints(Node):
         self.ammo_M = 0.5           #弹药质量
         self.ammo_CD = 0.82         #将水瓶视为一个圆柱体，圆柱体在空气中的阻力系数为0.82
         self.ammo_AREA = 0.014      #弹药迎风面面积（下落过程中，弹药大概率是翻滚下落，取侧面投影为迎风面）
+
+        #航线参数
+        self.declare_parameter('len_of_sight', 80.0)     #对准距离（米），飞行器沿打击方向反向延伸的距离，用于对准目标
+        self.len_of_sight = self.get_parameter('len_of_sight').value
+        self.aim_waypoint = 5                            #对准段航点数量
 
         #偏移量
         self.bearing_offset = 0                         #方向偏移量
@@ -186,6 +201,35 @@ class CalculateSecondaryWaypoints(Node):
             self.target_lat = float(pos[0])
             self.target_lon = float(pos[1])
             self.target_pos = (self.target_lat, self.target_lon)
+
+    #从QGC WPL文件中读取返航航点（盘旋掉头 + 降落）
+    def load_return_waypoints(self) -> ty.List[Waypoint]:
+        waypoints = []
+        try:
+            with open(self.return_pos_path, 'r', encoding='utf-8') as file:
+                for line in file:
+                    line = line.strip()
+                    if not line or line.startswith('QGC'):
+                        continue
+                    parts = line.split()
+                    if len(parts) < 12:
+                        continue
+                    wp = Waypoint()
+                    wp.is_current = False
+                    wp.frame = int(parts[2])
+                    wp.command = int(parts[3])
+                    wp.param1 = float(parts[4])
+                    wp.param2 = float(parts[5])
+                    wp.param3 = float(parts[6])
+                    wp.param4 = float(parts[7])
+                    wp.x_lat = float(parts[8])
+                    wp.y_long = float(parts[9])
+                    wp.z_alt = float(parts[10])
+                    wp.autocontinue = bool(int(parts[11]))
+                    waypoints.append(wp)
+        except FileNotFoundError:
+            self.get_logger().error(f"返航航线文件不存在: {self.return_pos_path}")
+        return waypoints
 
     #判断目标是否稳定
     def is_target_stable(self, target) -> bool:
@@ -333,34 +377,27 @@ class CalculateSecondaryWaypoints(Node):
 
         fly_h = 35.0
 
-        # 风向, 0度为正北，90度为正东
-        wind_bearing = math.degrees(math.atan2(self.wind_east, self.wind_north)) % 360
-
-        # 接近方向：逆风，固定翼迎风飞行更稳定
-        approach_bearing = (wind_bearing + 180.0) % 360
-
-        # 接近起点，从释放点沿接近方向反向偏移
-        approach_dist = 40.0
-        start_lat, start_lon = self.calculate_offset_point(
-            release_lat, release_lon, approach_bearing, approach_dist
+        # 打击方向：从辅助点（起飞区）指向目标，飞行器沿此方向进入打击区
+        strike_bearing = self.calculate_bearing(
+            self.fuzhu_lat, self.fuzhu_lon, self.target_lat, self.target_lon
         )
 
-        # 脱离点，投弹后沿接近方向继续前飞
-        exit_dist = 30.0
-        exit_bearing = (approach_bearing + 180.0) % 360
-        exit_lat, exit_lon = self.calculate_offset_point(
-            release_lat, release_lon, exit_bearing, exit_dist
+        # 接近方向：沿打击方向飞向释放点
+        approach_bearing = strike_bearing
+
+        # 接近起点，从释放点沿接近方向反向偏移 len_of_sight 米，保证有足够距离对准目标
+        start_lat, start_lon = self.calculate_offset_point(
+            release_lat, release_lon, (approach_bearing + 180.0) % 360, self.len_of_sight
         )
 
         waypoints = []
 
-        # 接近段：5个等距航点，从起点到释放点
-        approach_wp_count = 5
+        # 对准段：aim_waypoint 个等距航点，从起点到释放点
         d_lat = release_lat - start_lat
         d_lon = release_lon - start_lon
 
-        for i in range(1, approach_wp_count + 1):
-            ratio = i / approach_wp_count
+        for i in range(1, self.aim_waypoint + 1):
+            ratio = i / self.aim_waypoint
             wp_lat = start_lat + d_lat * ratio
             wp_lon = start_lon + d_lon * ratio
 
@@ -397,15 +434,9 @@ class CalculateSecondaryWaypoints(Node):
         wp_retract.autocontinue = True
         waypoints.append(wp_retract)
 
-        # 脱离航点
-        wp_exit = Waypoint()
-        wp_exit.frame = 3
-        wp_exit.command = 16
-        wp_exit.x_lat = exit_lat
-        wp_exit.y_long = exit_lon
-        wp_exit.z_alt = fly_h
-        wp_exit.autocontinue = True
-        waypoints.append(wp_exit)
+        # 加载返航航线（盘旋掉头 + 降落），拼接到打击航线末尾
+        return_waypoints = self.load_return_waypoints()
+        waypoints.extend(return_waypoints)
 
         waypoints[0].is_current = True
         return waypoints
@@ -421,7 +452,7 @@ class CalculateSecondaryWaypoints(Node):
         # 计算释放点
         release_lat, release_lon = self.calculate_release_point()
 
-        # 生成攻击航线
+        # 生成攻击航线（含返航）
         release_pt = (release_lat, release_lon)
         waypoints = self.calculate_approach_waypoints(release_pt)
 
@@ -469,7 +500,7 @@ class CalculateSecondaryWaypoints(Node):
 
 def main(args=None):
     rclpy.init(args=args)
-    node = CalculateSecondaryWaypoints()
+    node = CalculateSecondaryWaypoints01()
 
     try:        
         node.run()
@@ -481,5 +512,3 @@ def main(args=None):
     finally:
         node.destroy_node()
         rclpy.shutdown()
-
-

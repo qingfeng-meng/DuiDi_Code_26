@@ -1,0 +1,5 @@
+project_part_03 : 将参数修改为了ardupilot固件认识的参数，用于真机
+project_part_px4 : 是配合px4固件的，用于仿真
+secondary_waypoint : 是基于旧的航线方案的计算投弹方案
+secondary_waypoint_01 : 是基于新的航线方案的投弹方案
+
