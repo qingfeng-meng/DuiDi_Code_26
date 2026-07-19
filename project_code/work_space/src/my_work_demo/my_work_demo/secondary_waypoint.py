@@ -467,11 +467,6 @@ class CalculateSecondaryWaypoints(Node):
 
         self.get_logger().info('--- 打击航线已发布，节点进入空闲 ---')
 
-
-
-
-
-
 def main(args=None):
     rclpy.init(args=args)
     node = CalculateSecondaryWaypoints()
