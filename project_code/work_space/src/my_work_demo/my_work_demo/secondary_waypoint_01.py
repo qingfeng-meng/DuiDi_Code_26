@@ -59,14 +59,14 @@ class CalculateSecondaryWaypoints01(Node):
         self.yaw = 0.0    # 航向角（弧度，大地坐标系：0=正北，顺时针增加）
 
         #存储目标位置的文件路径
-        self.target_pos_path = "/home/qing/Duidi_Code_26/project_code/work_space/src/target_pos.json"
-        self.target_pos_backup_path = "/home/qing/Duidi_Code_26/project_code/work_space/src/target_pos_backup.json" 
+        self.target_pos_path = "/home/qing/Duidi_Code_26/project_code/work_space/src/target_pos/target_pos.json"
+        self.target_pos_backup_path = "/home/qing/Duidi_Code_26/project_code/work_space/src/target_pos/target_pos_backup.json" 
         self.target_pos = None
         self.target_lon = None
         self.target_lat = None
 
         #返航航线文件路径（QGC WPL格式，从Mission Planner导出）
-        self.return_pos_path = "/home/qing/Duidi_Code_26/project_code/work_space/src/return_pos.waypoints"
+        self.return_pos_path = "/home/qing/Duidi_Code_26/project_code/work_space/src/retuen_pos/return_pos.waypoints"
 
         #辅助点坐标（起飞区中标定点，用于计算打击方位角）
         self.declare_parameter('fuzhu_lat', 0.0)
@@ -203,7 +203,7 @@ class CalculateSecondaryWaypoints01(Node):
             self.target_pos = (self.target_lat, self.target_lon)
 
     #从QGC WPL文件中读取返航航点（盘旋掉头 + 降落）
-    def load_return_waypoints(self) -> ty.List[Waypoint]:
+    def load_return_waypoints(self , file_path) -> ty.List[Waypoint]:
         waypoints = []
         try:
             with open(self.return_pos_path, 'r', encoding='utf-8') as file:
@@ -435,7 +435,7 @@ class CalculateSecondaryWaypoints01(Node):
         waypoints.append(wp_retract)
 
         # 加载返航航线（盘旋掉头 + 降落），拼接到打击航线末尾
-        return_waypoints = self.load_return_waypoints()
+        return_waypoints = self.load_return_waypoints(self.return_pos_path)
         waypoints.extend(return_waypoints)
 
         waypoints[0].is_current = True

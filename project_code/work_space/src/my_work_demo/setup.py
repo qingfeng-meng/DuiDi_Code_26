@@ -27,7 +27,9 @@ setup(
             'project_part_03 = my_work_demo.project_part_03:main',
             'project_part_px4 = my_work_demo.project_part_px4:main',
             'secondary_waypoint = my_work_demo.secondary_waypoint',
-            'secondary_waypoint_01 = my_work_demo.secondary_waypoint_01:main'
+            'secondary_waypoint_01 = my_work_demo.secondary_waypoint_01:main',
+            'new_part_px4_1 = my_work_demo.new_part_px4_1:main',
+            'new_part_ardu_1 = my_work_demo.new_part_ardu_1:main',
         ],
     },
 )

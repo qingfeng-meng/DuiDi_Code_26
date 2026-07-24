@@ -263,9 +263,9 @@ class ProjectPartThree(Node):
                 self.switch_retry = 0
                 self._do_clear_mission(self._on_step_done)
             elif self.switch_retry == 0:
-                # 首次进入, 可能命令还没发出, 再次发送
+                # 首次进入, 可能命令还没发出, 再次发送   
                 # self._do_set_mode('AUTO.LOITER', self._on_mode_sent)
-                self._do_set_mode('AUTO', self._on_mode_sent)
+                self._do_set_mode('LOITER', self._on_mode_sent)
                 self.switch_retry += 1
             else:
                 self.switch_retry += 1
@@ -308,7 +308,7 @@ class ProjectPartThree(Node):
             self.pending_new_waypoints = []
             self.switch_phase = ''
         elif self.switch_retry == 0:
-            self._do_set_mode('AUTO.MISSION', self._on_mode_sent)
+            self._do_set_mode('AUTO', self._on_mode_sent)
             self.switch_retry += 1
         else:
             self.switch_retry += 1

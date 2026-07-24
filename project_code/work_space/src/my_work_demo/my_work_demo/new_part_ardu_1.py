@@ -12,16 +12,16 @@ from enum import Enum
 class MissionState(Enum):
     PRIMARY = 1
     SECONDARY = 2
-    THIRD = 3
+    # THIRD = 3
     DONE = 4
 
 
 class ProjectPartThree(Node):
 
     def __init__(self):
-        super().__init__('project_one')
+        super().__init__('project_part_three')
 
-        # QoS PX4官方的用于CallBack函数
+        # QoS配置：PX4官方推荐的回调函数QoS参数
         qos_profile = QoSProfile(
             reliability=ReliabilityPolicy.RELIABLE,
             history=HistoryPolicy.KEEP_LAST,
@@ -35,8 +35,8 @@ class ProjectPartThree(Node):
             depth=10,
         )
 
-        # 创建话题订阅者用于获取飞行器的当前信息
-        #1. 获取当前航点列表 2. 获取当前航点已 reached 3. 获取当前GPS信息 4. 获取当前状态信息
+        # 创建话题订阅者，用于获取飞行器的当前信息：
+        #   1. 当前航点列表  2. 当前已到达航点  3. 当前GPS信息  4. 当前状态信息
         self.waypoints_sub = self.create_subscription(
             WaypointList, '/mavros/mission/waypoints',
             self.waypoints_callback, qos_profile,
@@ -52,23 +52,22 @@ class ProjectPartThree(Node):
             self.global_position_callback, sensor_qos_profile,
         )
 
-        self.state_sub = self.create_subscription(
-            State, '/mavros/state',
-            self.state_callback, qos_profile,
-        )
+        self.state_sub = self.create_subscription(State, '/mavros/state',self.state_callback, qos_profile,)
 
-        #创建服务客户端
-        #1. 清除航点 2. 推送航点 3. 设置模式 4. 设置当前航点 5. 拉取航点
+        # self.secondary_waypoints_sub = self.create_subscription(WaypointList, '/secondary_waypoints', self.secondary_waypoints_callback, qos_profile)
+
+        # 创建服务客户端，用于向飞控发送指令：
+        #   1. 清除航点  2. 推送航点  3. 设置模式  4. 设置当前航点  5. 拉取航点
         self.clear_mission_client = self.create_client(WaypointClear, 'mavros/mission/clear')
         self.push_mission_client = self.create_client(WaypointPush, 'mavros/mission/push')
         self.set_mode_client = self.create_client(SetMode, 'mavros/set_mode')
         self.set_current_client = self.create_client(WaypointSetCurrent, 'mavros/mission/set_current')
         self.pull_mission_client = self.create_client(WaypointPull, 'mavros/mission/pull')
 
-        # 三段航点文件路径
-        self.primary_path = "/home/qing/Duidi_Code_26/project_code/work_space/src/waypoints/tingjiping/7_19_test_A.waypoints"
-        self.secondary_path = "/home/qing/Duidi_Code_26/project_code/work_space/src/waypoints/tingjiping/7_19_test_B.waypoints"
-        self.third_path = "/home/qing/Duidi_Code_26/project_code/work_space/src/waypoints/tingjiping/7_19_test_C.waypoints"
+        # 两段航点文件路径
+        self.primary_path = "/home/qing/Duidi_Code_26/project_code/work_space/src/waypoints/tingjiping/test_724_A.waypoints"
+        self.secondary_path = "/home/qing/Duidi_Code_26/project_code/work_space/src/waypoints/tingjiping/test_724_B.waypoints"
+        # self.third_path = "/home/qing/Duidi_Code_26/project_code/work_space/src/waypoints/tingjiping/7_19_test_C.waypoints"
 
         self.current_global_position = None              # 当前GPS坐标
 
@@ -76,36 +75,29 @@ class ProjectPartThree(Node):
 
         self.current_callback_waypoints = None           # 当前回调函数的航点列表
         self.current_waypoints = None                    # 当前航点列表(执行的航点列表)
-        self.primary_waypoints = []
-        self.secondary_waypoints = []
-        self.third_waypoints = []
+        self.primary_waypoints = []                      # 第一段航线列表
+        self.secondary_waypoints = []                    # 第二段航线列表
+        # self.third_waypoints = []                        # 第三段航线列表
 
         self.wait_for_service()
 
         self.last_reached_wp = None                      # 当前到达的航点序号
-        self.mission_state = None
+        self.mission_state = None                       # 当前任务阶段
 
         self.switching = False                           # 正在切换航线标志
-        self.pending_new_waypoints: ty.List[Waypoint] = []
-        self.switch_phase = ''                           # 当前切换阶段 (wait_loiter/clear_done/push_done/...)
-        self.switch_retry = 0
-        self.switch_timer = self.create_timer(0.5, self._switch_timer_callback)
+        self.pending_new_waypoints: ty.List[Waypoint] = []   # 待推送的新航线列表
+        self.switch_phase = ''                           # 当前切换阶段 (set_loiter/clear/push/pull/set_current/wait_auto)
+        self.switch_retry = 0                            # 切换步骤重试计数
+        self.switch_timer = self.create_timer(0.5, self._switch_timer_callback)  # 切换状态机定时器（每0.5秒检查一次）
 
-        self.primary_waypoints_compeleted = False
-        self.secondary_waypoints_compeleted = False
-        self.third_waypoints_compeleted = False
-        
-
-    #回调函数
+    # 回调函数
     def waypoints_callback(self, msg: WaypointList):
-        """从飞控中获取的航点列表后，并没有打印，也没有再次使用
-           是因为这个航线列表的目的是
-           当出现问题，不知到是哪里的问题
-           可以将此航线打印，判断飞控得到的航点列表是否是想让他执行的航线"""
+        """飞控返回的当前航点列表（仅用于调试）
+        当航线执行出现异常时，可打印此列表来确认飞控实际收到的航点是否正确"""
         self.current_callback_waypoints = msg.waypoints
 
     def waypoint_reached_callback(self, msg: WaypointReached):
-        """"当前已到达的航点"""
+        """当前已到达的航点"""
         self.last_reached_wp = msg.wp_seq
         fc_count = len(self.current_callback_waypoints) if self.current_callback_waypoints else 0
         current_mode = self.current_state.mode if self.current_state else '?'
@@ -125,23 +117,28 @@ class ProjectPartThree(Node):
 
         if self.mission_state == MissionState.PRIMARY and self.last_reached_wp == complete_wp:
             self.get_logger().info('第一航线已执行完毕')
-            self.primary_waypoints_compeleted = True
             self.mission_state = MissionState.SECONDARY
             self.last_reached_wp = 0
             self.switch_mission(self.secondary_waypoints)
 
         if self.mission_state == MissionState.SECONDARY and self.last_reached_wp == complete_wp:
             self.get_logger().info('第二航线已执行完毕')
-            self.secondary_waypoints_compeleted = True
-            self.mission_state = MissionState.THIRD
-            self.last_reached_wp = 0
-            self.switch_mission(self.third_waypoints)
-
-        if self.mission_state == MissionState.THIRD and self.last_reached_wp == complete_wp:
-            self.get_logger().info('第三航线已执行完毕')
-            self.third_waypoints_compeleted = True
             self.mission_state = MissionState.DONE
             self.get_logger().info('所有航点已执行完毕')
+
+        if self.mission_state == MissionState.DONE:
+            return
+
+        # if self.mission_state == MissionState.SECONDARY and self.last_reached_wp == complete_wp:
+        #     self.get_logger().info('第二航线已执行完毕')
+        #     self.mission_state = MissionState.THIRD
+        #     self.last_reached_wp = 0
+        #     self.switch_mission(self.third_waypoints)
+
+        # if self.mission_state == MissionState.THIRD and self.last_reached_wp == complete_wp:
+        #     self.get_logger().info('第三航线已执行完毕')
+        #     self.mission_state = MissionState.DONE
+        #     self.get_logger().info('所有航点已执行完毕')
 
     def global_position_callback(self, msg: NavSatFix):
         """当前GPS坐标"""
@@ -151,13 +148,18 @@ class ProjectPartThree(Node):
         """当前状态"""
         self.current_state = msg
 
-#等待服务就绪
+    # def secondary_waypoints_callback(self, msg: WaypointList):
+    #     """话题订阅获取第二条航线"""
+    #     self.secondary_waypoints = list(msg.waypoints)
+    #     self.get_logger().info(f'收到第二条航线(话题): {len(self.secondary_waypoints)} 个航点')
+
+# 等待服务就绪
     def wait_for_service(self):
         self.get_logger().info('等待 MAVROS 连接服务就绪...')
 
         services = [
             (self.push_mission_client, 'WaypointPush'),
-            # (self.pull_mission_client, 'WaypointPull'),
+            (self.pull_mission_client, 'WaypointPull'),
             (self.clear_mission_client, 'WaypointClear'),
             (self.set_current_client, 'WaypointSetCurrent'),
             (self.set_mode_client, 'SetMode'),
@@ -169,7 +171,7 @@ class ProjectPartThree(Node):
 
         self.get_logger().info('所有 MAVROS 准备就绪!')
 
-#原生异步调用（使用 Future 链式回调替代 spin_until_future_complete）
+# 原生异步调用（使用 Future 链式回调替代 spin_until_future_complete）
     def _do_clear_mission(self, on_done: ty.Callable):
         """异步清空航线"""
         request = WaypointClear.Request()
@@ -218,7 +220,7 @@ class ProjectPartThree(Node):
         )
 
     def _handle_service_done(self, future, name: str, on_done: ty.Callable):
-        """通用 service 结果处理"""
+        """通用服务调用结果处理"""
         if future.result() is not None and future.result().success:
             self.get_logger().info(f'{name}成功')
         else:
@@ -226,14 +228,14 @@ class ProjectPartThree(Node):
         on_done()
 
     def _handle_set_mode_done(self, future, mode: str, on_done: ty.Callable):
-        """set_mode 结果处理"""
+        """模式切换结果处理"""
         if future.result() is not None and future.result().mode_sent:
             self.get_logger().info(f'模式切换成功: {mode}')
         else:
             self.get_logger().warn(f'模式切换未确认: {mode} (可能已在该模式)')
         on_done()
 
-#异步航线切换链 (Future + 定时器状态机, 每步确认飞控状态后再走下一步)
+# 异步航线切换链（Future 回调 + 定时器状态机，每步确认飞控状态后再走下一步）
     def switch_mission(self, new_waypoints: ty.List[Waypoint]):
         """启动异步航线切换"""
         current_mode = self.current_state.mode if self.current_state else '?'
@@ -245,8 +247,8 @@ class ProjectPartThree(Node):
         self.switch_retry = 0
 
         # 步骤1: 发送 LOITER 命令 (异步)
-        self._do_set_mode('AUTO.LOITER', self._on_mode_sent)
-
+        # self._do_set_mode('AUTO.LOITER', self._on_mode_sent)
+        self._do_set_mode('LOITER', self._on_mode_sent)
     def _on_mode_sent(self):
         """模式切换命令已发出, 定时器等待飞控确认"""
         self.switch_retry = 0
@@ -260,7 +262,8 @@ class ProjectPartThree(Node):
 
         # --- 阶段1: 等待 LOITER 模式确认 ---
         if self.switch_phase == 'set_loiter':
-            if self.current_state is not None and self.current_state.mode == 'AUTO.LOITER':
+            # if self.current_state is not None and self.current_state.mode == 'AUTO.LOITER':
+            if self.current_state is not None and self.current_state.mode == 'LOITER':
                 self.get_logger().info('[切换] LOITER 已确认, 清空航线')
                 self.switch_phase = 'clear'
                 self.switch_retry = 0
@@ -272,14 +275,15 @@ class ProjectPartThree(Node):
                 self._do_clear_mission(self._on_step_done)
             elif self.switch_retry == 0:
                 # 首次进入, 可能命令还没发出, 再次发送
-                self._do_set_mode('AUTO.LOITER', self._on_mode_sent)
+                # self._do_set_mode('AUTO.LOITER', self._on_mode_sent)
+                self._do_set_mode('LOITER', self._on_mode_sent)
                 self.switch_retry += 1
             else:
                 self.switch_retry += 1
 
         # --- 阶段2: 清空航线 ---
         elif self.switch_phase == 'clear':
-            pass  # 等待 _do_clear_mission 的 done callback
+            pass  # 等待 _do_clear_mission 的完成回调
 
         # --- 阶段3: 推送航线 ---
         elif self.switch_phase == 'push':
@@ -293,34 +297,35 @@ class ProjectPartThree(Node):
         elif self.switch_phase == 'set_current':
             pass
 
-        # --- 阶段6: 等待 AUTO.MISSION 模式确认 ---
+        # --- 阶段6: 等待 AUTO 模式确认 ---
         elif self.switch_phase == 'wait_auto':
             self._check_auto_mode(15, '===== 航线切换完成, 等待航点到达 =====')
 
-        # --- 初始化阶段: 等待 AUTO.MISSION 模式确认 ---
+        # --- 初始化阶段: 等待 AUTO 模式确认 ---
         elif self.switch_phase == 'init_auto':
             self._check_auto_mode(30, '第一航线已启动, 等待航点到达...')
 
     def _check_auto_mode(self, max_retries: int, done_msg: str):
-        """等待飞控确认 AUTO.MISSION 模式"""
-        if self.current_state is not None and self.current_state.mode == 'AUTO.MISSION':
+        """等待飞控确认 AUTO 模式"""
+        # if self.current_state is not None and self.current_state.mode == 'AUTO.MISSION':
+        if self.current_state is not None and self.current_state.mode == 'AUTO':
             self.switching = False
             self.pending_new_waypoints = []
             self.switch_phase = ''
             self.get_logger().info(done_msg)
         elif self.switch_retry >= max_retries:
-            self.get_logger().info(f'[切换] AUTO.MISSION 等待超时({max_retries}), 强制结束')
+            self.get_logger().info(f'[切换] AUTO 等待超时({max_retries}), 强制结束')
             self.switching = False
             self.pending_new_waypoints = []
             self.switch_phase = ''
         elif self.switch_retry == 0:
-            self._do_set_mode('AUTO.MISSION', self._on_mode_sent)
+            self._do_set_mode('AUTO', self._on_mode_sent)
             self.switch_retry += 1
         else:
             self.switch_retry += 1
 
     def _on_step_done(self):
-        """service 调用完成, 推进切换阶段"""
+        """服务调用完成，推进切换阶段"""
         if self.switch_phase == 'clear':
             self.get_logger().info('[切换] 清空完成, 推送新航线')
             self.switch_phase = 'push'
@@ -332,17 +337,19 @@ class ProjectPartThree(Node):
             self._do_pull_mission(self._on_step_done)
 
         elif self.switch_phase == 'pull':
-            self.get_logger().info('[切换] 拉取完成, 设置当前航点为0')
+            self.get_logger().info('[切换] 拉取完成, 设置当前航点为1(跳过home)')
             self.switch_phase = 'set_current'
             self._do_set_current_waypoint(0, self._on_step_done)
 
         elif self.switch_phase == 'set_current':
-            self.get_logger().info('[切换] 当前航点已设置, 切回 AUTO.MISSION')
+            # self.get_logger().info('[切换] 当前航点已设置, 切回 AUTO.MISSION')
+            self.get_logger().info('[切换] 当前航点已设置, 切回 AUTO')
             self.switch_phase = 'wait_auto'
             self.switch_retry = 0
-            self._do_set_mode('AUTO.MISSION', self._on_mode_sent)
+            # self._do_set_mode('AUTO.MISSION', self._on_mode_sent)
+            self._do_set_mode('AUTO', self._on_mode_sent)
 
-#从waypoints文件中读取航点
+# 从waypoints文件中读取航点
     def read_waypoints_from_waypoints(self, file_path: str) -> ty.List[Waypoint]:
         """从 QGC 导出的 .wpl 文件加载航点（支持空家点自动覆盖）"""
         waypoints = []
@@ -408,9 +415,9 @@ class ProjectPartThree(Node):
         self.get_logger().info(f"从 {file_path} 加载了 {len(waypoints)} 个有效航点")
         return waypoints
 
-#辅助函数
+# 辅助函数
     def print_waypoint_info(self, waypoints: ty.List[Waypoint]):
-        """Print information about waypoints."""
+        """打印航点信息"""
         self.get_logger().info('=' * 60)
         self.get_logger().info(f'Total waypoints: {len(waypoints)}')
         self.get_logger().info('=' * 60)
@@ -429,7 +436,7 @@ class ProjectPartThree(Node):
 
     @staticmethod
     def get_command_name(command: int) -> str:
-        """Convert MAVLink command number to name."""
+        """将MAVLink命令编号转换为名称"""
         commands = {
             16: 'WAYPOINT',
             17: 'LOITER_UNLIM',
@@ -444,7 +451,7 @@ class ProjectPartThree(Node):
 
     @staticmethod
     def get_frame_name(frame: int) -> str:
-        """Convert MAVLink frame number to name."""
+        """将MAVLink帧编号转换为名称"""
         frames = {
             0: 'GLOBAL',
             3: 'GLOBAL_RELATIVE_ALT',
@@ -452,14 +459,14 @@ class ProjectPartThree(Node):
         }
         return frames.get(frame, f'FRAME_{frame}')
 
-    #主函数
+    # 主函数
     def run(self):
         self.primary_waypoints = self.read_waypoints_from_waypoints(self.primary_path)
         self.print_waypoint_info(self.primary_waypoints)
         self.secondary_waypoints = self.read_waypoints_from_waypoints(self.secondary_path)
         self.print_waypoint_info(self.secondary_waypoints)
-        self.third_waypoints = self.read_waypoints_from_waypoints(self.third_path)
-        self.print_waypoint_info(self.third_waypoints)
+        # self.third_waypoints = self.read_waypoints_from_waypoints(self.third_path)
+        # self.print_waypoint_info(self.third_waypoints)
 
         self.mission_state = MissionState.PRIMARY
         self.switching = True
@@ -470,6 +477,7 @@ class ProjectPartThree(Node):
         self._do_clear_mission(self._on_init_step_done)
 
     def _on_init_step_done(self):
+        """初始化异步链回调：清空→推送→拉取→设置当前航点→切AUTO模式"""
         if self.switch_phase == 'init_clear':
             self.get_logger().info('[初始化] 清空完成, 推送第一航线')
             self.switch_phase = 'init_push'
@@ -483,10 +491,12 @@ class ProjectPartThree(Node):
             self.switch_phase = 'init_current'
             self._do_set_current_waypoint(0, self._on_init_step_done)
         elif self.switch_phase == 'init_current':
-            self.get_logger().info('[初始化] 切到 AUTO.MISSION')
+            # self.get_logger().info('[初始化] 切到 AUTO.MISSION')
+            self.get_logger().info('[初始化] 切到 AUTO')
             self.switch_phase = 'init_auto'
             self.switch_retry = 0
-            self._do_set_mode('AUTO.MISSION', self._on_mode_sent)
+            # self._do_set_mode('AUTO.MISSION', self._on_mode_sent)
+            self._do_set_mode('AUTO', self._on_mode_sent)
 
 
 def main(args=None):
